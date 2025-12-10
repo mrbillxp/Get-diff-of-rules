@@ -5,6 +5,9 @@ on:
     - cron: "0 18 * * *"  # run daily at 18:00 UTC (~02:00 HKT); adjust as you like
   workflow_dispatch:      # allow manual run from Actions tab
 
+permissions:
+  contents: write
+
 jobs:
   fetch:
     runs-on: ubuntu-latest
