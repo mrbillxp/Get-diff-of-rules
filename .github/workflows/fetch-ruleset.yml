@@ -2,8 +2,8 @@ name: Fetch ruleset snapshots
 
 on:
   schedule:
-    - cron: "0 18 * * *"  # run daily at 18:00 UTC (~02:00 HKT); adjust as you like
-  workflow_dispatch:      # allow manual run from Actions tab
+    - cron: "0 18 * * *"  # daily
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -32,6 +32,10 @@ jobs:
         run: |
           python fetch_ruleset.py
 
+      - name: Post-process snapshot files
+        run: |
+          python process_ruleset.py
+
       - name: Configure git user
         run: |
           git config user.name "github-actions[bot]"
@@ -42,8 +46,8 @@ jobs:
           git status
           if [ -n "$(git status --porcelain)" ]; then
             git add data
-            git commit -m "Update ruleset snapshot"
-            git push origin HEAD
+            git commit -m "Update processed ruleset snapshot"
+            git push origin HEAD:${GITHUB_REF_NAME}
           else
             echo "No changes to commit."
           fi
