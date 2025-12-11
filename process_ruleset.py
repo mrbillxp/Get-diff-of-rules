@@ -25,7 +25,7 @@ def remove_marker_and_clean(folder: Path):
             continue
 
         lines = text.splitlines()
-        new_lines = [line for line in lines if "this_ruleset_is_made_by_sukkaw" not in line]
+        new_lines = [line for line in lines if "7h1s_rul35et_i5_mad3_by_5ukk4w-ruleset" OR "this_ruleset_is_made_by_sukkaw" not in line]
         if new_lines != lines:
             path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
