@@ -73,7 +73,7 @@ def process_apple_cdn(folder: Path):
                 continue
             if "." in stripped:
                 parts = stripped.split(".", 1)
-                replaced = f"{parts[0]} DOMAIN-SET,{parts[1]}"
+                replaced = f"{parts[0]} DOMAIN-SUFFIX,{parts[1]}"
                 new_lines.append(replaced)
             else:
                 new_lines.append(line)
