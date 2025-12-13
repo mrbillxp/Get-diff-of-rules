@@ -1,4 +1,3 @@
-import os
 import datetime
 from pathlib import Path
 
@@ -13,15 +12,16 @@ def get_today_folder():
 def remove_marker_and_clean(folder: Path):
     """
     Remove any line containing either:
-      - 'DOMAIN,this_ruleset_is_made_by_sukkaw.ruleset.skk.moe'
-      - 'DOMAIN,7h1s_rul35et_i5_mad3_by_5ukk4w-ruleset.skk.moe'
-      - '7h1s_rul35et_i5_mad3_by_5ukk4w-ruleset.skk.moe'
+    -'this_ruleset_is_made_by_sukkaw.rules.skk.moe'
+    - '7h1s_rul35et_i5_mad3_by_5ukk4w-ruleset.skk.moe'
     from all .conf, .txt, .json files under folder.
     """
     markers = [
-        "this_ruleset_is_made_by_sukkaw.ruleset.skk.moe",
+       "this_ruleset_is_made_by_sukkaw.ruleset.skk.moe",
         "7h1s_rul35et_i5_mad3_by_5ukk4w-ruleset.skk.moe",
+        "This_ruleset_is_made_by_sukkaw.ruleset.skk.moe",
         "DOMAIN,this_ruleset_is_made_by_sukkaw.ruleset.skk.moe",
+        "DOMAIN,This_ruleset_is_made_by_sukkaw.ruleset.skk.moe",
         "DOMAIN,7h1s_rul35et_i5_mad3_by_5ukk4w-ruleset.skk.moe",
     ]
 
@@ -46,7 +46,7 @@ def remove_marker_and_clean(folder: Path):
 
 def process_apple_cdn(folder: Path):
     """
-    1. Replace '.' with 'DOMAIN-SET,' before every URL entry
+    1. Replace '.' with 'DOMAIN-SUFFIX,' before every URL entry
        in 'apple_cdn.conf' under domainset folder.
     2. Merge domainset/apple_cdn.conf and non_ip/apple_cdn.conf
        into one unified 'Apple_CDN.conf' in the same date folder.
@@ -99,6 +99,53 @@ def process_apple_cdn(folder: Path):
         unified_path.write_text("\n".join(unified_lines) + "\n", encoding="utf-8")
 
 
+def prefix_domain_suffix_in_domainset(folder: Path):
+    """
+    In any 'domainset' directory, for the files:
+      - cdn.conf
+      - download.conf
+      - reject.conf
+      - reject_extra.conf
+      - reject_phishing.conf
+
+    Prefix 'DOMAIN-SUFFIX,' to every non-empty, non-comment line.
+    """
+    target_filenames = {
+        "cdn.conf",
+        "download.conf",
+        "reject.conf",
+        "reject_extra.conf",
+        "reject_phishing.conf",
+    }
+
+    for path in folder.rglob("*.conf"):
+        if path.name not in target_filenames:
+            continue
+
+        # Only process files under a domainset directory
+        parts_lower = {p.lower() for p in path.parts}
+        if "domainset" not in parts_lower:
+            continue
+
+        try:
+            lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        except Exception:
+            continue
+
+        new_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                new_lines.append(line)
+                continue
+            # Avoid double prefix if already present
+            if stripped.startswith("DOMAIN-SUFFIX,"):
+                new_lines.append(line)
+            else:
+                new_lines.append(f"DOMAIN-SUFFIX,{stripped}")
+        path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+
 def main():
     today_folder = get_today_folder()
     if not today_folder.exists():
@@ -107,6 +154,7 @@ def main():
 
     remove_marker_and_clean(today_folder)
     process_apple_cdn(today_folder)
+    prefix_domain_suffix_in_domainset(today_folder)
 
 
 if __name__ == "__main__":
