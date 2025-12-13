@@ -19,8 +19,10 @@ def remove_marker_and_clean(folder: Path):
     from all .conf, .txt, .json files under folder.
     """
     markers = [
-        "this_ruleset_is_made_by_sukkaw",
+        "this_ruleset_is_made_by_sukkaw.ruleset.skk.moe",
         "7h1s_rul35et_i5_mad3_by_5ukk4w-ruleset.skk.moe",
+        "DOMAIN,this_ruleset_is_made_by_sukkaw.ruleset.skk.moe",
+        "DOMAIN,7h1s_rul35et_i5_mad3_by_5ukk4w-ruleset.skk.moe",
     ]
 
     targets = list(folder.rglob("*.conf")) + list(folder.rglob("*.txt")) + list(folder.rglob("*.json"))
