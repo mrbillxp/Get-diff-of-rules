@@ -1,7 +1,6 @@
 import datetime
-import re
 from pathlib import Path
-from collections import defaultdict
+import re
 
 BASE_DIR = Path(__file__).parent
 
@@ -11,160 +10,202 @@ def get_today_folder():
     return BASE_DIR / "data" / today
 
 
-def remove_marker_lines(folder: Path):
+def should_remove_line(line: str) -> bool:
     """
-    Remove any line containing (case insensitive):
-      - '7h1s_rul35et_i5_mad3_by_5ukk4w-ruleset.skk.moe'
-      - 'this_ruleset_is_made_by_sukkaw.ruleset.skk.moe'
-      - 'DOMAIN,this_ruleset_is_made_by_sukkaw.ruleset.skk.moe'
-      - 'DOMAIN,7h1s_rul35et_i5_mad3_by_5ukk4w-ruleset.skk.moe'
+    Check if line contains any of the marker strings that should be removed.
     """
     markers = [
         "7h1s_rul35et_i5_mad3_by_5ukk4w-ruleset.skk.moe",
         "this_ruleset_is_made_by_sukkaw.ruleset.skk.moe",
-        "this_ruleset_is_made_by_sukkaw",
-        "7h1s_rul35et_i5_mad3_by_5ukk4w",
+        "DOMAIN,this_ruleset_is_made_by_sukkaw.ruleset.skk.moe",
+        "DOMAIN,7h1s_rul35et_i5_mad3_by_5ukk4w-ruleset.skk.moe",
     ]
+    return any(marker in line for marker in markers)
 
-    targets = list(folder.rglob("*.conf")) + list(folder.rglob("*.txt")) + list(folder.rglob("*.json"))
 
-    for path in targets:
+def has_reserved_prefix(line: str) -> bool:
+    """
+    Check if line already has a reserved prefix that should NOT be replaced.
+    Reserved prefixes: DOMAIN-KEYWORD, DOMAIN, URL-REGEX, DOMAIN-SET, DOMAIN-WILDCARD
+    """
+    stripped = line.strip()
+    reserved_prefixes = [
+        "DOMAIN-KEYWORD,",
+        "URL-REGEX,",
+        "DOMAIN-SET,",
+        "DOMAIN-WILDCARD,",
+        "DOMAIN,",  # Check DOMAIN, last to avoid matching substrings
+    ]
+    return any(stripped.startswith(p) for p in reserved_prefixes)
+
+
+def process_line_for_domain_suffix(line: str) -> str:
+    """
+    If line starts with a dot (.) and has no reserved prefix, 
+    replace dot with 'DOMAIN-SUFFIX,' prefix.
+    Otherwise, return unchanged.
+    """
+    stripped = line.strip()
+    
+    # Skip empty lines and comments
+    if not stripped or stripped.startswith("#"):
+        return line
+    
+    # If has reserved prefix, don't modify
+    if has_reserved_prefix(stripped):
+        return line
+    
+    # If starts with dot, replace with DOMAIN-SUFFIX,
+    if stripped.startswith("."):
+        # Remove leading dot and add DOMAIN-SUFFIX,
+        domain_part = stripped.lstrip(".")
+        return f"DOMAIN-SUFFIX,{domain_part}"
+    
+    return line
+
+
+def clean_and_process_files(folder_path: Path):
+    """
+    Process all .conf files in folder:
+    1. Remove lines with markers
+    2. Replace leading dots with DOMAIN-SUFFIX, (preserving reserved prefixes)
+    """
+    if not folder_path.exists():
+        print(f"Folder not found: {folder_path}")
+        return
+    
+    conf_files = list(folder_path.rglob("*.conf"))
+    print(f"Processing {len(conf_files)} files in {folder_path.name}/")
+    
+    for conf_path in conf_files:
         try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
+            text = conf_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception as e:
+            print(f"  ⚠️ Failed to read {conf_path.name}: {e}")
             continue
-
+        
         lines = text.splitlines()
         new_lines = []
+        
         for line in lines:
-            if any(m.lower() in line.lower() for m in markers):
+            # Step 1: Remove marker lines
+            if should_remove_line(line):
                 continue
-            new_lines.append(line)
-
+            
+            # Step 2: Process line for DOMAIN-SUFFIX, replacement
+            processed_line = process_line_for_domain_suffix(line)
+            new_lines.append(processed_line)
+        
+        # Write back if changed
         if new_lines != lines:
-            path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+            conf_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+            print(f"  ✓ {conf_path.name}: cleaned")
 
 
-def process_dot_entries(folder: Path):
+def merge_and_deduplicate_files(
+    folder_path: Path, 
+    source_filename: str, 
+    output_filename: str,
+    remove_source: bool = True
+) -> bool:
     """
-    Replace entries starting with '.' to 'DOMAIN-SUFFIX,.'
-    BUT ONLY if they don't already have a prefix like:
-      - DOMAIN-KEYWORD
-      - DOMAIN
-      - URL-REGEX
-      - DOMAIN-SET
-      - DOMAIN-WILDCARD
-      - DOMAIN-SUFFIX
+    Merge domainset and non_ip versions of a file.
+    1. Collect entries from both domainset/{filename} and non_ip/{filename}
+    2. Deduplicate (normalize by stripping known prefixes for comparison)
+    3. Write unified file to folder root (data/YYYY-MM-DD/{output_filename})
+    4. Remove source files if successful
+    
+    Returns True if successful, False otherwise.
     """
-    protected_prefixes = {
-        "DOMAIN-KEYWORD",
-        "DOMAIN-WILDCARD",
-        "DOMAIN-SET",
-        "URL-REGEX",
-        "DOMAIN-SUFFIX",
-        "DOMAIN",  # Must check this last since it's a substring of others
-    }
-
-    targets = list(folder.rglob("*.conf")) + list(folder.rglob("*.txt"))
-
-    for path in targets:
+    domainset_conf = folder_path / "domainset" / source_filename
+    non_ip_conf = folder_path / "non_ip" / source_filename
+    output_conf = folder_path / output_filename
+    
+    # Check if at least one source exists
+    sources_found = [p for p in [domainset_conf, non_ip_conf] if p.exists()]
+    if not sources_found:
+        print(f"  ⚠️ No source files found for {source_filename}")
+        return False
+    
+    # Collect all entries, deduplicate by normalized domain
+    entries_dict = {}  # normalized_domain -> original_line
+    
+    for source_path in sources_found:
         try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
+            text = source_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception as e:
+            print(f"  ⚠️ Failed to read {source_path.name}: {e}")
             continue
-
-        lines = text.splitlines()
-        new_lines = []
-        modified = False
-
-        for line in lines:
-            stripped = line.strip()
-
-            # Skip empty lines and comments
+        
+        for raw_line in text.splitlines():
+            stripped = raw_line.strip()
+            
+            # Skip empty and comments
             if not stripped or stripped.startswith("#"):
-                new_lines.append(line)
                 continue
-
-            # Check if line already has any protected prefix
-            has_protected_prefix = False
-            for prefix in protected_prefixes:
-                if stripped.startswith(prefix):
-                    has_protected_prefix = True
+            
+            # Normalize: remove known prefixes to check for duplicates
+            normalized = stripped
+            for prefix in ["DOMAIN-SUFFIX,", "DOMAIN-KEYWORD,", "DOMAIN,", "URL-REGEX,", "DOMAIN-SET,", "DOMAIN-WILDCARD,"]:
+                if normalized.startswith(prefix):
+                    normalized = normalized[len(prefix):]
                     break
-
-            # If no protected prefix and starts with '.', add DOMAIN-SUFFIX,
-            if not has_protected_prefix and stripped.startswith("."):
-                new_line = f"DOMAIN-SUFFIX,{stripped}"
-                new_lines.append(new_line)
-                modified = True
-            else:
-                new_lines.append(line)
-
-        if modified:
-            path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-
-
-def merge_and_remove_files(folder: Path, filename_pattern: str, output_filename: str):
-    """
-    Merge files matching a pattern from domainset/ and non_ip/ folders.
-    Example: filename_pattern="apple_cdn.conf", output_filename="Apple_CDN.conf"
-    """
-    domainset_path = None
-    non_ip_path = None
-
-    # Find both files
-    for path in folder.rglob(filename_pattern):
-        parts_lower = {p.lower() for p in path.parts}
-        if "domainset" in parts_lower:
-            domainset_path = path
-        elif "non_ip" in parts_lower:
-            non_ip_path = path
-
-    # Merge content
-    merged_lines = []
-
-    def append_file_content(file_path: Path):
-        if file_path and file_path.is_file():
-            try:
-                content = file_path.read_text(encoding="utf-8", errors="ignore")
-                merged_lines.extend(content.splitlines())
-            except Exception:
-                pass
-
-    append_file_content(domainset_path)
-    append_file_content(non_ip_path)
-
+            
+            # Store or skip if already seen (keep first occurrence)
+            if normalized not in entries_dict:
+                entries_dict[normalized] = raw_line
+    
+    if not entries_dict:
+        print(f"  ⚠️ No valid entries found for {source_filename}")
+        return False
+    
     # Write merged file
-    if merged_lines:
-        output_path = folder / output_filename
-        output_path.write_text("\n".join(merged_lines) + "\n", encoding="utf-8")
-
-        # Remove original files
-        if domainset_path and domainset_path.is_file():
-            domainset_path.unlink()
-        if non_ip_path and non_ip_path.is_file():
-            non_ip_path.unlink()
+    merged_lines = sorted(entries_dict.values())  # Sort for stable output
+    output_conf.write_text("\n".join(merged_lines) + "\n", encoding="utf-8")
+    print(f"  ✓ Merged {output_filename}: {len(merged_lines)} unique entries")
+    
+    # Remove source files if requested
+    if remove_source:
+        for source_path in sources_found:
+            if source_path.exists():
+                source_path.unlink()
+                print(f"    → Removed {source_path.relative_to(folder_path.parent)}")
+    
+    return True
 
 
 def main():
     today_folder = get_today_folder()
     if not today_folder.exists():
-        print(f"No folder found for today: {today_folder}")
+        print(f"❌ No folder found for today: {today_folder}")
         return
-
-    print("Step 1: Removing marker lines...")
-    remove_marker_lines(today_folder)
-
-    print("Step 2: Processing dot entries (adding DOMAIN-SUFFIX, prefix)...")
-    process_dot_entries(today_folder)
-
-    print("Step 3: Merging apple_cdn.conf files...")
-    merge_and_remove_files(today_folder, "apple_cdn.conf", "Apple_CDN.conf")
-
-    print("Step 4: Merging cdn.conf files...")
-    merge_and_remove_files(today_folder, "cdn.conf", "CDN.conf")
-
-    print("Done!")
+    
+    print(f"\n📅 Processing snapshot for {today_folder.name}\n")
+    
+    # Step 1: Clean both domainset and non_ip folders
+    print("Step 1: Cleaning files (removing markers, adding DOMAIN-SUFFIX,)\n")
+    clean_and_process_files(today_folder / "domainset")
+    clean_and_process_files(today_folder / "non_ip")
+    
+    # Step 2: Merge apple_cdn.conf
+    print("\nStep 2: Merging apple_cdn.conf\n")
+    merge_and_deduplicate_files(
+        today_folder,
+        source_filename="apple_cdn.conf",
+        output_filename="Apple_CDN.conf",
+        remove_source=True
+    )
+    
+    # Step 3: Merge cdn.conf
+    print("\nStep 3: Merging cdn.conf\n")
+    merge_and_deduplicate_files(
+        today_folder,
+        source_filename="cdn.conf",
+        output_filename="CDN.conf",
+        remove_source=True
+    )
+    
+    print("\n✅ All processing complete!\n")
 
 
 if __name__ == "__main__":
