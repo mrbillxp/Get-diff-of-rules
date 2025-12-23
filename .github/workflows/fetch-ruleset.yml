@@ -1,8 +1,8 @@
-name: Fetch ruleset snapshots
+name: Fetch and clean ruleset
 
 on:
   schedule:
-    - cron: "0 18 * * *"  # daily at 18:00 UTC
+    - cron: "0 18 * * *"
   workflow_dispatch:
 
 permissions:
@@ -11,7 +11,6 @@ permissions:
 jobs:
   fetch:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -32,7 +31,7 @@ jobs:
         run: |
           python fetch_ruleset.py
 
-      - name: Post-process snapshot files
+      - name: Clean unwanted strings
         run: |
           python process_ruleset.py
 
@@ -46,7 +45,7 @@ jobs:
           git status
           if [ -n "$(git status --porcelain)" ]; then
             git add data
-            git commit -m "Update processed ruleset snapshot"
+            git commit -m "Remove unwanted markers from ruleset"
             git push origin HEAD:${GITHUB_REF_NAME}
           else
             echo "No changes to commit."
