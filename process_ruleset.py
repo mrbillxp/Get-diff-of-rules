@@ -1,52 +1,38 @@
-name: Fetch and clean ruleset
+import datetime
+from pathlib import Path
+import re
 
-on:
-  schedule:
-    - cron: "0 18 * * *"
-  workflow_dispatch:
+BASE_DIR = Path(__file__).parent
 
-permissions:
-  contents: write
 
-jobs:
-  fetch:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: true
+def get_today_folder() -> Path:
+    """
+    Return today's snapshot folder: data/YYYY-MM-DD
+    """
+    today = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    return BASE_DIR / "data" / today
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+def remove_unwanted_strings(folder: Path):
+    """
+    Remove any line containing (case-insensitive):
 
-      - name: Fetch ruleset data
-        run: |
-          python fetch_ruleset.py
+      - '7h1s_rul35et_i5_mad3_by_5ukk4w-ruleset.skk.moe'
+      - 'this_ruleset_is_made_by_sukkaw.ruleset.skk.moe'
+      - 'DOMAIN,this_ruleset_is_made_by_sukkaw.ruleset.skk.moe'
+      - 'DOMAIN,7h1s_rul35et_i5_mad3_by_5ukk4w-ruleset.skk.moe'
 
-      - name: Clean unwanted strings
-        run: |
-          python process_ruleset.py
+    from files under these folders (relative to `folder`):
 
-      - name: Configure git user
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - List/
+      - Clash/
+      - Surfboard/
 
-      - name: Commit changes if any
-        run: |
-          git status
-          if [ -n "$(git status --porcelain)" ]; then
-            git add data
-            git commit -m "Remove unwanted markers from ruleset"
-            git push origin HEAD:${GITHUB_REF_NAME}
-          else
-            echo "No changes to commit."
-          fi
+    Only files with extensions:
+      .conf, .txt, .json, .list, .yaml, .yml
+    """
+
+    markers = [
+        "7h1s_rul35et_i5_mad3_by_5ukk4w-ruleset.skk.moe",
+        "this_ruleset_is_made_by_sukkaw.ruleset.skk.moe",
+        "DOMAIN,this_ruleset_is_made_by_sukkaw
